@@ -1,0 +1,24 @@
+{
+  "name": "dsh-zh-reminder",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "dsh-zh-reminder — 最小粒度的中文语言提醒：每个 step 在消息末尾追加一条 user 提醒，紧贴本次生成。",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

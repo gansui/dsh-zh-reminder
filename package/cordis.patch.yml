@@ -1,0 +1,7 @@
+# dsh-zh-reminder bundle patch.
+# 一行 insert 即挂载 Host 半身；本插件没有浏览器半身。
+# 与 dsh-zh-cn 同构：name = 包名（作为 import 说明符），模块内 export const name 才是插件名。
+- insert:
+    - id: zh-reminder
+      name: 'dsh-zh-reminder'
+      config: {}
