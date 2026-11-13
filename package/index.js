@@ -34,28 +34,70 @@
  *    可用 config.repeatEvery 调低频次；但要明白——低频次会让提醒离生成变远，
  *    正是「模型忘了」的复发点。
  */
+
 export const name = 'zh-reminder'
 
 /**
  * @param {import('@deepseek-ai/cordis').Context} ctx
- * @param {{ text?: string, repeatEvery?: number }} [config]
+ * @param {{
+ *   text?: string,            // 提醒文案
+ *   repeatEvery?: number,     // 每 N 个 step 提醒一次；1 = 每个 step 都提醒
+ *   sourceKind?: string,      // 提醒消息的去重标识；改它可与其它提醒插件共存
+ * }} [config]
  */
 export function apply(ctx, config = {}) {
   const reminderText = config.text ?? '请用简体中文思考和回复；代码、命令、路径、报错原文按原样保留，仅用中文解释。'
-  const repeatEvery = config.repeatEvery ?? 1 // 每 N 步提醒一次；1 = 每步都提醒
+  const repeatEvery = Math.max(1, Math.trunc(config.repeatEvery ?? 1))
+  const sourceKind = config.sourceKind ?? 'zh-reminder'
 
-  ctx.on('agent/pre-step', async ({ signal, step }, next) => {
-    // next() 得到本轮该 step 默认要进入的消息（已含 runtime-context 快照）
+  /**
+   * 【Bug C 修复】判断一批消息里是否已带本插件的同款提醒。
+   *
+   * 必须同时命中两点才算「重复」：
+   * 1. source.kind === sourceKind —— 精确锁定是本插件注入的提醒，不误伤其它插件消息；
+   * 2. content 里有一段 text 与 reminderText 完全一致 —— 避免「同 kind 但不同文本」
+   *    的提醒被误判为已存在而被吞掉。
+   */
+  const hasReminder = (messages) => {
+    if (!Array.isArray(messages)) return false
+    return messages.some((m) => (
+      m?.source?.kind === sourceKind
+      && Array.isArray(m.content)
+      && m.content.some((b) => b?.type === 'text' && b.text === reminderText)
+    ))
+  }
+
+  // 本地计数：DSH 的 payload.step 不是稳定的「第几步」全局计数器（跨工具循环、
+  // 重放等场景不可控），改用本插件自己维护的调用序号，避免「奇偶」语义不可预测。
+  let calls = 0
+
+  ctx.on('agent/pre-step', async ({ signal }, next) => {
+    // 【Bug A 语义】`agent/pre-step` 是「返回合并」型瀑布：每个 handler 用
+    // `await next()` 拿到**后续所有 handler 处理完**的 decision（同一对象透传），
+    // 在其基础上修改后 `return` 出去成为最终结果。这里**只调用一次 next()**——
+    // 多次调用会触发 cordis `waterfall` 抛 `Error("next() called multiple times")`。
+    // reminder 追加在 decision.messages 末尾：只要本 handler 的注册顺序在其它
+    // 注入者（如 dsh-agent-instructions）之后，reminder 就排在 AGENTS.md 之后，
+    // 处于消息最末尾，是离本次生成最近的位置。
     const decision = await next()
     if (decision.kind === 'reject' || signal.aborted) return decision
 
-    // 频次控制：只在 step % repeatEvery === 0 时追加（payload 的 step 序号）
-    if (repeatEvery > 1 && step % repeatEvery !== 0) return decision
+    // 【Bug B 修复】频次控制：用自维护计数器 calls 代替 payload.step。
+    // calls 从 1 开始；每调用一次 +1。只在 calls % repeatEvery === 0 时追加。
+    // repeatEvery=1（默认）⇒ 每个 step 都提醒，紧贴生成；repeatEvery=N ⇒ 每 N 步一次。
+    // 注意：真正的「稀释」来源是历史里**堆积多条同款提醒**——已由下方 hasReminder
+    // 去重根治：任何时刻上下文里至多一条本插件提醒，故重复提醒不会互相稀释。
+    calls += 1
+    if (calls % repeatEvery !== 0) return decision
+
+    // 【Bug C 修复】本 step 即将发送的消息里若已带同款提醒，直接返回，不再追加。
+    // 这保证即使 reminder 残留进了上一步的历史，这一步也不会再复制出一条。
+    if (hasReminder(decision.messages)) return decision
 
     const { createUserMessage } = await import('@deepseek-ai/dsh-llm')
     const reminder = createUserMessage({
       content: [{ type: 'text', text: reminderText }],
-      source: { kind: 'zh-reminder', form: 'reminder', summary: reminderText },
+      source: { kind: sourceKind, form: 'reminder', summary: reminderText },
     })
 
     return { ...decision, messages: [...decision.messages, reminder] }
