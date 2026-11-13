@@ -1,5 +1,10 @@
 最好的强制模型中文输出dsh插件,基本可以保证默认的输出均为中文
 
+安装方法
+
+    下载dsh-zh-reminder-1.0.0.tgz
+    执行 dsh plugin --profile web add ./dsh-zh-reminder-1.0.0.tgz
+
 现在一般常见的现在给出三种插件的技术思路对比。
 
 ---
