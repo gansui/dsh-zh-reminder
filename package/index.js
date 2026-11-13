@@ -76,9 +76,9 @@ export function apply(ctx, config = {}) {
     // `await next()` 拿到**后续所有 handler 处理完**的 decision（同一对象透传），
     // 在其基础上修改后 `return` 出去成为最终结果。这里**只调用一次 next()**——
     // 多次调用会触发 cordis `waterfall` 抛 `Error("next() called multiple times")`。
-    // reminder 追加在 decision.messages 末尾：只要本 handler 的注册顺序在其它
-    // 注入者（如 dsh-agent-instructions）之后，reminder 就排在 AGENTS.md 之后，
-    // 处于消息最末尾，是离本次生成最近的位置。
+    // 本 handler 以 prepend（ctx.on 第三参 true）注册，位于瀑布最外层：下游所有
+    // 注入者（dsh-agent-instructions、runtime-context、time-context 等）都在
+    // next() 里先追加完毕，reminder 最后追加 ⇒ 恒定排在消息最末尾，紧贴本次生成。
     const decision = await next()
     if (decision.kind === 'reject' || signal.aborted) return decision
 
@@ -94,12 +94,15 @@ export function apply(ctx, config = {}) {
     // 这保证即使 reminder 残留进了上一步的历史，这一步也不会再复制出一条。
     if (hasReminder(decision.messages)) return decision
 
-    const { createUserMessage } = await import('@deepseek-ai/dsh-llm')
+    const { createUserMessage, boundContextSummary } = await import('@deepseek-ai/dsh-llm')
+    // createUserMessage 不校验 source.summary 长度（官方 notice 约定 120 字符上限，
+    // 见 dsh-llm 的 CONTEXT_SUMMARY_MAX_CHARS）。config.text 自定义超长文案时，
+    // 用 dsh-llm 导出的 boundContextSummary 截到 120 字符（119 + "…"）保持合规。
     const reminder = createUserMessage({
       content: [{ type: 'text', text: reminderText }],
-      source: { kind: sourceKind, form: 'reminder', summary: reminderText },
+      source: { kind: sourceKind, form: 'reminder', summary: boundContextSummary(reminderText) },
     })
 
     return { ...decision, messages: [...decision.messages, reminder] }
-  })
+  }, true) // true = prepend shorthand：本 handler 成为瀑布最外层，提醒恒定排在消息最末尾（否则 dsh-time-context 的英文时间戳可能垫后）
 }
